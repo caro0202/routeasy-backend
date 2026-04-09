@@ -9,7 +9,7 @@ from ortools.constraint_solver import routing_enums_pb2, pywrapcp
 from sqlalchemy import create_engine, Column, Integer, String
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-# 🔥 SUA DATABASE (já corrigida)
+# 🔥 DATABASE
 DATABASE_URL = "postgresql+psycopg2://routeasy_user:ctvMqrVrVdTAmoheJP2NJZ5KGxn6tv8J@dpg-d7c27l67r5hc739l5nng-a.oregon-postgres.render.com/routeasy"
 
 engine = create_engine(DATABASE_URL)
@@ -45,18 +45,29 @@ class History(Base):
 Base.metadata.create_all(bind=engine)
 
 # -------------------------
-# UTILIDADES (SEU CÓDIGO)
+# UTILIDADES
 # -------------------------
 
 def clean_address(addr):
     addr = addr.lower()
+
+    # 🔥 normalização forte
     addr = addr.replace("r ", "rua ")
     addr = addr.replace("av ", "avenida ")
     addr = addr.replace(",", " ")
+    addr = addr.replace(".", " ")
+    addr = addr.replace("-", " ")
     addr = addr.replace("  ", " ")
 
+    # 🔥 força contexto correto
+    if "itatiba" not in addr:
+        addr += " itatiba"
+
     if "sao paulo" not in addr:
-        addr += " itatiba sao paulo brasil"
+        addr += " sao paulo"
+
+    if "brasil" not in addr:
+        addr += " brasil"
 
     return addr.strip()
 
@@ -66,12 +77,20 @@ def get_coordinates(address):
     headers = {"User-Agent": "route-optimizer"}
 
     try:
+        print("🔎 Buscando:", address)
+
         r = requests.get(url, params=params, headers=headers)
+
         if r.status_code == 200 and r.json():
             data = r.json()[0]
-            return [float(data["lon"]), float(data["lat"])]
-    except:
-        pass
+            coord = [float(data["lon"]), float(data["lat"])]
+            print("✅ Encontrado:", coord)
+            return coord
+
+        print("❌ Não encontrado:", address)
+
+    except Exception as e:
+        print("⚠️ Erro geocoding:", e)
 
     return None
 
@@ -90,6 +109,7 @@ def get_matrix(coords):
         data = r.json()
         return data["distances"], data["durations"]
 
+    print("❌ Erro matrix:", r.text)
     return None, None
 
 def get_route(coords):
@@ -103,10 +123,11 @@ def get_route(coords):
     if r.status_code == 200:
         return r.json()
 
+    print("❌ Erro route:", r.text)
     return None
 
 # -------------------------
-# API PRINCIPAL (INALTERADA)
+# API PRINCIPAL
 # -------------------------
 
 @app.post("/optimize")
@@ -130,6 +151,9 @@ def optimize(data: RouteRequest):
 
         time.sleep(1)
 
+    print("📍 Coordenadas válidas:", valid_coords)
+    print("⚠️ Inválidos:", invalid_addresses)
+
     if len(valid_coords) < 2:
         return {
             "route": [],
@@ -139,6 +163,14 @@ def optimize(data: RouteRequest):
         }
 
     dist_matrix, dur_matrix = get_matrix(valid_coords)
+
+    if not dist_matrix:
+        return {
+            "route": [],
+            "invalidAddresses": invalid_addresses,
+            "totalDistance": 0,
+            "estimatedDuration": 0
+        }
 
     manager = pywrapcp.RoutingIndexManager(len(valid_coords), 1, 0)
     routing = pywrapcp.RoutingModel(manager)
@@ -170,6 +202,15 @@ def optimize(data: RouteRequest):
     optimized_labels = [valid_labels[i] for i in order]
 
     route_data = get_route(optimized_coords)
+
+    if not route_data:
+        return {
+            "route": [],
+            "invalidAddresses": invalid_addresses,
+            "totalDistance": 0,
+            "estimatedDuration": 0
+        }
+
     route = route_data["routes"][0]
 
     formatted_route = [
@@ -181,16 +222,20 @@ def optimize(data: RouteRequest):
         for i in range(len(optimized_coords))
     ]
 
-    # 🔥 SALVAR HISTÓRICO NO BANCO
+    # 🔥 salvar histórico
     db.add(History(input=str(data.addresses)))
     db.commit()
 
-    return {
+    result = {
         "route": formatted_route,
         "invalidAddresses": invalid_addresses,
         "totalDistance": route["summary"]["distance"] / 1000,
         "estimatedDuration": route["summary"]["duration"] / 60
     }
+
+    print("🚀 Resultado final:", result)
+
+    return result
 
 # -------------------------
 # HISTÓRICO
