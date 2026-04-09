@@ -30,7 +30,14 @@ class RouteRequest(BaseModel):
 # -------------------------
 
 def clean_address(addr):
-    return addr.replace(",", " ").strip()
+    addr = addr.replace(",", " ")
+    addr = addr.replace("  ", " ")
+
+    # 🔥 MELHORIA CRÍTICA DE GEOCODING
+    if "Brasil" not in addr:
+        addr += " São Paulo Brasil"
+
+    return addr.strip()
 
 def get_coordinates(address):
     url = "https://nominatim.openstreetmap.org/search"
@@ -38,12 +45,20 @@ def get_coordinates(address):
     headers = {"User-Agent": "route-optimizer"}
 
     try:
+        print("Buscando:", address)
+
         r = requests.get(url, params=params, headers=headers)
+
         if r.status_code == 200 and r.json():
             data = r.json()[0]
-            return [float(data["lon"]), float(data["lat"])]
-    except:
-        pass
+            coord = [float(data["lon"]), float(data["lat"])]
+            print("Encontrado:", coord)
+            return coord
+
+        print("Não encontrado:", address)
+
+    except Exception as e:
+        print("Erro geocoding:", e)
 
     return None
 
@@ -65,6 +80,7 @@ def get_matrix(coords):
         data = r.json()
         return data["distances"], data["durations"]
 
+    print("Erro matrix:", r.text)
     return None, None
 
 def get_route(coords):
@@ -81,6 +97,7 @@ def get_route(coords):
     if r.status_code == 200:
         return r.json()
 
+    print("Erro route:", r.text)
     return None
 
 # -------------------------
@@ -97,7 +114,7 @@ def optimize(data: RouteRequest):
     valid_labels = []
     invalid_addresses = []
 
-    # 🔥 geocoding
+    # 🔥 GEOCODING
     if coords_input and len(coords_input) >= 2:
         valid_coords = coords_input
         valid_labels = [f"Ponto {i+1}" for i in range(len(coords_input))]
@@ -114,6 +131,9 @@ def optimize(data: RouteRequest):
 
             time.sleep(1)
 
+    print("Coords válidos:", valid_coords)
+    print("Inválidos:", invalid_addresses)
+
     if len(valid_coords) < 2:
         return {
             "route": [],
@@ -122,7 +142,7 @@ def optimize(data: RouteRequest):
             "estimatedDuration": 0
         }
 
-    # 🔥 matriz
+    # 🔥 MATRIZ
     dist_matrix, dur_matrix = get_matrix(valid_coords)
 
     if not dist_matrix:
@@ -191,6 +211,8 @@ def optimize(data: RouteRequest):
         "totalDistance": route["summary"]["distance"] / 1000,
         "estimatedDuration": route["summary"]["duration"] / 60
     }
+
+    print("Resultado final:", result)
 
     return result
 
