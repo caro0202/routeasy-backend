@@ -7,7 +7,7 @@ from ortools.constraint_solver import routing_enums_pb2, pywrapcp
 
 app = FastAPI()
 
-# CORS
+# CORS (ESSENCIAL PARA VERCEL)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,9 +23,7 @@ class RouteRequest(BaseModel):
     coords: list = []
 
 def clean_address(addr):
-    addr = addr.replace(",", " ")
-    addr = addr.replace("  ", " ")
-    return addr.strip()
+    return addr.replace(",", " ").strip()
 
 def get_coordinates(address):
     url = "https://nominatim.openstreetmap.org/search"
@@ -64,7 +62,11 @@ def get_matrix(coords):
 
 def get_route(coords):
     url = "https://api.openrouteservice.org/v2/directions/driving-car"
-    headers = {"Authorization": API_KEY, "Content-Type": "application/json"}
+    headers = {
+        "Authorization": API_KEY,
+        "Content-Type": "application/json"
+    }
+
     body = {"coordinates": coords}
 
     r = requests.post(url, json=body, headers=headers)
@@ -77,8 +79,8 @@ def get_route(coords):
 @app.post("/optimize")
 def optimize(data: RouteRequest):
 
-    addresses = data.addresses if data.addresses else []
-    coords_input = data.coords if data.coords else []
+    addresses = data.addresses or []
+    coords_input = data.coords or []
 
     valid_coords = []
     valid_labels = []
@@ -102,14 +104,21 @@ def optimize(data: RouteRequest):
 
     if len(valid_coords) < 2:
         return {
-            "error": "Poucos endereços válidos.",
-            "invalid": invalid_addresses
+            "route": [],
+            "invalidAddresses": invalid_addresses,
+            "totalDistance": 0,
+            "estimatedDuration": 0
         }
 
     dist_matrix, dur_matrix = get_matrix(valid_coords)
 
     if not dist_matrix:
-        return {"error": "Erro ao gerar matriz"}
+        return {
+            "route": [],
+            "invalidAddresses": invalid_addresses,
+            "totalDistance": 0,
+            "estimatedDuration": 0
+        }
 
     manager = pywrapcp.RoutingIndexManager(len(valid_coords), 1, 0)
     routing = pywrapcp.RoutingModel(manager)
@@ -142,13 +151,31 @@ def optimize(data: RouteRequest):
 
     route_data = get_route(optimized_coords)
 
+    if not route_data:
+        return {
+            "route": [],
+            "invalidAddresses": invalid_addresses,
+            "totalDistance": 0,
+            "estimatedDuration": 0
+        }
+
     route = route_data["routes"][0]
 
+    # 🔥 RETORNO PADRÃO PARA FRONTEND
+    formatted_route = [
+        {
+            "address": optimized_labels[i],
+            "lat": optimized_coords[i][1],
+            "lng": optimized_coords[i][0],
+            "stopIndex": i,
+            "distanceToNext": None
+        }
+        for i in range(len(optimized_coords))
+    ]
+
     return {
-        "coords": optimized_coords,
-        "addresses": optimized_labels,
-        "geometry": route["geometry"],
-        "distance": route["summary"]["distance"],
-        "duration": route["summary"]["duration"],
-        "invalid": invalid_addresses
+        "route": formatted_route,
+        "invalidAddresses": invalid_addresses,
+        "totalDistance": route["summary"]["distance"] / 1000,
+        "estimatedDuration": route["summary"]["duration"] / 60
     }
