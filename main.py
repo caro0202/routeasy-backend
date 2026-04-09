@@ -7,7 +7,7 @@ from ortools.constraint_solver import routing_enums_pb2, pywrapcp
 
 app = FastAPI()
 
-# CORS (ESSENCIAL PARA VERCEL)
+# 🔥 CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,11 +16,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 🔥 HISTÓRICO EM MEMÓRIA
+history_storage = []
+
 API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjNjODEyOTY3MzJjNzRmZGY5OWEzN2YwZGY2MjJkZWM0IiwiaCI6Im11cm11cjY0In0="
 
 class RouteRequest(BaseModel):
     addresses: list = []
     coords: list = []
+
+# -------------------------
+# UTILIDADES
+# -------------------------
 
 def clean_address(addr):
     return addr.replace(",", " ").strip()
@@ -76,6 +83,10 @@ def get_route(coords):
 
     return None
 
+# -------------------------
+# API PRINCIPAL
+# -------------------------
+
 @app.post("/optimize")
 def optimize(data: RouteRequest):
 
@@ -86,6 +97,7 @@ def optimize(data: RouteRequest):
     valid_labels = []
     invalid_addresses = []
 
+    # 🔥 geocoding
     if coords_input and len(coords_input) >= 2:
         valid_coords = coords_input
         valid_labels = [f"Ponto {i+1}" for i in range(len(coords_input))]
@@ -110,6 +122,7 @@ def optimize(data: RouteRequest):
             "estimatedDuration": 0
         }
 
+    # 🔥 matriz
     dist_matrix, dur_matrix = get_matrix(valid_coords)
 
     if not dist_matrix:
@@ -161,7 +174,6 @@ def optimize(data: RouteRequest):
 
     route = route_data["routes"][0]
 
-    # 🔥 RETORNO PADRÃO PARA FRONTEND
     formatted_route = [
         {
             "address": optimized_labels[i],
@@ -173,9 +185,24 @@ def optimize(data: RouteRequest):
         for i in range(len(optimized_coords))
     ]
 
-    return {
+    result = {
         "route": formatted_route,
         "invalidAddresses": invalid_addresses,
         "totalDistance": route["summary"]["distance"] / 1000,
         "estimatedDuration": route["summary"]["duration"] / 60
     }
+
+    return result
+
+# -------------------------
+# HISTÓRICO
+# -------------------------
+
+@app.post("/save-history")
+def save_history(data: dict):
+    history_storage.append(data)
+    return {"status": "ok"}
+
+@app.get("/history")
+def get_history():
+    return history_storage
