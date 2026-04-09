@@ -5,11 +5,10 @@ import requests
 import time
 from ortools.constraint_solver import routing_enums_pb2, pywrapcp
 
-# 🔥 NOVO (BANCO)
+# 🔥 BANCO
 from sqlalchemy import create_engine, Column, Integer, String
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-# 🔥 DATABASE
 DATABASE_URL = "postgresql+psycopg2://routeasy_user:ctvMqrVrVdTAmoheJP2NJZ5KGxn6tv8J@dpg-d7c27l67r5hc739l5nng-a.oregon-postgres.render.com/routeasy"
 
 engine = create_engine(DATABASE_URL)
@@ -45,13 +44,12 @@ class History(Base):
 Base.metadata.create_all(bind=engine)
 
 # -------------------------
-# UTILIDADES
+# 🔥 UTILIDADES
 # -------------------------
 
 def clean_address(addr):
     addr = addr.lower()
 
-    # 🔥 normalização forte
     addr = addr.replace("r ", "rua ")
     addr = addr.replace("av ", "avenida ")
     addr = addr.replace(",", " ")
@@ -59,7 +57,6 @@ def clean_address(addr):
     addr = addr.replace("-", " ")
     addr = addr.replace("  ", " ")
 
-    # 🔥 força contexto correto
     if "itatiba" not in addr:
         addr += " itatiba"
 
@@ -71,27 +68,48 @@ def clean_address(addr):
 
     return addr.strip()
 
+# 🔥 GEOCODING COM FALLBACK
 def get_coordinates(address):
-    url = "https://nominatim.openstreetmap.org/search"
-    params = {"q": address, "format": "json", "limit": 1}
-    headers = {"User-Agent": "route-optimizer"}
-
+    # 1️⃣ NOMINATIM
     try:
-        print("🔎 Buscando:", address)
+        print("🔎 Nominatim:", address)
+
+        url = "https://nominatim.openstreetmap.org/search"
+        params = {"q": address, "format": "json", "limit": 1}
+        headers = {"User-Agent": "route-optimizer"}
 
         r = requests.get(url, params=params, headers=headers)
 
         if r.status_code == 200 and r.json():
             data = r.json()[0]
             coord = [float(data["lon"]), float(data["lat"])]
-            print("✅ Encontrado:", coord)
+            print("✅ Nominatim OK:", coord)
             return coord
 
-        print("❌ Não encontrado:", address)
+    except Exception as e:
+        print("⚠️ Nominatim erro:", e)
+
+    # 2️⃣ FALLBACK OPENROUTESERVICE
+    try:
+        print("🔎 ORS:", address)
+
+        url = "https://api.openrouteservice.org/geocode/search"
+        headers = {"Authorization": API_KEY}
+        params = {"text": address, "size": 1}
+
+        r = requests.get(url, params=params, headers=headers)
+
+        if r.status_code == 200:
+            data = r.json()
+            if data["features"]:
+                coord = data["features"][0]["geometry"]["coordinates"]
+                print("✅ ORS OK:", coord)
+                return coord
 
     except Exception as e:
-        print("⚠️ Erro geocoding:", e)
+        print("⚠️ ORS erro:", e)
 
+    print("❌ NÃO ENCONTRADO:", address)
     return None
 
 def get_matrix(coords):
@@ -127,7 +145,7 @@ def get_route(coords):
     return None
 
 # -------------------------
-# API PRINCIPAL
+# 🔥 API PRINCIPAL
 # -------------------------
 
 @app.post("/optimize")
@@ -151,7 +169,7 @@ def optimize(data: RouteRequest):
 
         time.sleep(1)
 
-    print("📍 Coordenadas válidas:", valid_coords)
+    print("📍 Válidos:", valid_coords)
     print("⚠️ Inválidos:", invalid_addresses)
 
     if len(valid_coords) < 2:
@@ -222,7 +240,6 @@ def optimize(data: RouteRequest):
         for i in range(len(optimized_coords))
     ]
 
-    # 🔥 salvar histórico
     db.add(History(input=str(data.addresses)))
     db.commit()
 
@@ -233,12 +250,12 @@ def optimize(data: RouteRequest):
         "estimatedDuration": route["summary"]["duration"] / 60
     }
 
-    print("🚀 Resultado final:", result)
+    print("🚀 RESULTADO FINAL:", result)
 
     return result
 
 # -------------------------
-# HISTÓRICO
+# 🔥 HISTÓRICO
 # -------------------------
 
 @app.get("/history")
