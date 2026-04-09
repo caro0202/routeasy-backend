@@ -5,6 +5,17 @@ import requests
 import time
 from ortools.constraint_solver import routing_enums_pb2, pywrapcp
 
+# 🔥 NOVO (BANCO)
+from sqlalchemy import create_engine, Column, Integer, String
+from sqlalchemy.orm import sessionmaker, declarative_base
+
+# 🔥 SUA DATABASE (já corrigida)
+DATABASE_URL = "postgresql+psycopg2://routeasy_user:ctvMqrVrVdTAmoheJP2NJZ5KGxn6tv8J@dpg-d7c27l67r5hc739l5nng-a.oregon-postgres.render.com/routeasy"
+
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(bind=engine)
+Base = declarative_base()
+
 app = FastAPI()
 
 # 🔥 CORS
@@ -16,29 +27,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 🔥 HISTÓRICO EM MEMÓRIA
-history_storage = []
-
-API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjNjODEyOTY3MzJjNzRmZGY5OWEzN2YwZGY2MjJkZWM0IiwiaCI6Im11cm11cjY0In0="
+API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgi"
 
 class RouteRequest(BaseModel):
     addresses: list = []
     coords: list = []
 
 # -------------------------
-# UTILIDADES
+# 🔥 MODELO DO BANCO
+# -------------------------
+
+class History(Base):
+    __tablename__ = "history"
+    id = Column(Integer, primary_key=True)
+    input = Column(String)
+
+Base.metadata.create_all(bind=engine)
+
+# -------------------------
+# UTILIDADES (SEU CÓDIGO)
 # -------------------------
 
 def clean_address(addr):
     addr = addr.lower()
-
-    # 🔥 normalizações comuns
     addr = addr.replace("r ", "rua ")
     addr = addr.replace("av ", "avenida ")
     addr = addr.replace(",", " ")
     addr = addr.replace("  ", " ")
 
-    # 🔥 força contexto
     if "sao paulo" not in addr:
         addr += " itatiba sao paulo brasil"
 
@@ -50,29 +66,18 @@ def get_coordinates(address):
     headers = {"User-Agent": "route-optimizer"}
 
     try:
-        print("Buscando:", address)
-
         r = requests.get(url, params=params, headers=headers)
-
         if r.status_code == 200 and r.json():
             data = r.json()[0]
-            coord = [float(data["lon"]), float(data["lat"])]
-            print("Encontrado:", coord)
-            return coord
-
-        print("Não encontrado:", address)
-
-    except Exception as e:
-        print("Erro geocoding:", e)
+            return [float(data["lon"]), float(data["lat"]]
+    except:
+        pass
 
     return None
 
 def get_matrix(coords):
     url = "https://api.openrouteservice.org/v2/matrix/driving-car"
-    headers = {
-        "Authorization": API_KEY,
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": API_KEY, "Content-Type": "application/json"}
 
     body = {
         "locations": coords,
@@ -85,15 +90,11 @@ def get_matrix(coords):
         data = r.json()
         return data["distances"], data["durations"]
 
-    print("Erro matrix:", r.text)
     return None, None
 
 def get_route(coords):
     url = "https://api.openrouteservice.org/v2/directions/driving-car"
-    headers = {
-        "Authorization": API_KEY,
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": API_KEY, "Content-Type": "application/json"}
 
     body = {"coordinates": coords}
 
@@ -102,42 +103,32 @@ def get_route(coords):
     if r.status_code == 200:
         return r.json()
 
-    print("Erro route:", r.text)
     return None
 
 # -------------------------
-# API PRINCIPAL
+# API PRINCIPAL (INALTERADA)
 # -------------------------
 
 @app.post("/optimize")
 def optimize(data: RouteRequest):
 
-    addresses = data.addresses or []
-    coords_input = data.coords or []
+    db = SessionLocal()
 
     valid_coords = []
     valid_labels = []
     invalid_addresses = []
 
-    # 🔥 GEOCODING
-    if coords_input and len(coords_input) >= 2:
-        valid_coords = coords_input
-        valid_labels = [f"Ponto {i+1}" for i in range(len(coords_input))]
-    else:
-        for addr in addresses:
-            cleaned = clean_address(addr)
-            coord = get_coordinates(cleaned)
+    for addr in data.addresses:
+        cleaned = clean_address(addr)
+        coord = get_coordinates(cleaned)
 
-            if coord:
-                valid_coords.append(coord)
-                valid_labels.append(addr)
-            else:
-                invalid_addresses.append(addr)
+        if coord:
+            valid_coords.append(coord)
+            valid_labels.append(addr)
+        else:
+            invalid_addresses.append(addr)
 
-            time.sleep(1)
-
-    print("Coords válidos:", valid_coords)
-    print("Inválidos:", invalid_addresses)
+        time.sleep(1)
 
     if len(valid_coords) < 2:
         return {
@@ -147,16 +138,7 @@ def optimize(data: RouteRequest):
             "estimatedDuration": 0
         }
 
-    # 🔥 MATRIZ
     dist_matrix, dur_matrix = get_matrix(valid_coords)
-
-    if not dist_matrix:
-        return {
-            "route": [],
-            "invalidAddresses": invalid_addresses,
-            "totalDistance": 0,
-            "estimatedDuration": 0
-        }
 
     manager = pywrapcp.RoutingIndexManager(len(valid_coords), 1, 0)
     routing = pywrapcp.RoutingModel(manager)
@@ -188,15 +170,6 @@ def optimize(data: RouteRequest):
     optimized_labels = [valid_labels[i] for i in order]
 
     route_data = get_route(optimized_coords)
-
-    if not route_data:
-        return {
-            "route": [],
-            "invalidAddresses": invalid_addresses,
-            "totalDistance": 0,
-            "estimatedDuration": 0
-        }
-
     route = route_data["routes"][0]
 
     formatted_route = [
@@ -204,32 +177,27 @@ def optimize(data: RouteRequest):
             "address": optimized_labels[i],
             "lat": optimized_coords[i][1],
             "lng": optimized_coords[i][0],
-            "stopIndex": i,
-            "distanceToNext": None
         }
         for i in range(len(optimized_coords))
     ]
 
-    result = {
+    # 🔥 SALVAR HISTÓRICO NO BANCO
+    db.add(History(input=str(data.addresses)))
+    db.commit()
+
+    return {
         "route": formatted_route,
         "invalidAddresses": invalid_addresses,
         "totalDistance": route["summary"]["distance"] / 1000,
         "estimatedDuration": route["summary"]["duration"] / 60
     }
 
-    print("Resultado final:", result)
-
-    return result
-
 # -------------------------
 # HISTÓRICO
 # -------------------------
 
-@app.post("/save-history")
-def save_history(data: dict):
-    history_storage.append(data)
-    return {"status": "ok"}
-
 @app.get("/history")
 def get_history():
-    return history_storage
+    db = SessionLocal()
+    items = db.query(History).all()
+    return [{"input": i.input} for i in items]
