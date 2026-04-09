@@ -30,12 +30,17 @@ class RouteRequest(BaseModel):
 # -------------------------
 
 def clean_address(addr):
+    addr = addr.lower()
+
+    # 🔥 normalizações comuns
+    addr = addr.replace("r ", "rua ")
+    addr = addr.replace("av ", "avenida ")
     addr = addr.replace(",", " ")
     addr = addr.replace("  ", " ")
 
-    # 🔥 MELHORIA CRÍTICA DE GEOCODING
-    if "Brasil" not in addr:
-        addr += " São Paulo Brasil"
+    # 🔥 força contexto
+    if "sao paulo" not in addr:
+        addr += " itatiba sao paulo brasil"
 
     return addr.strip()
 
