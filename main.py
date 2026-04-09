@@ -69,7 +69,7 @@ def get_coordinates(address):
         r = requests.get(url, params=params, headers=headers)
         if r.status_code == 200 and r.json():
             data = r.json()[0]
-            return [float(data["lon"]), float(data["lat"]]
+            return [float(data["lon"]), float(data["lat"])]
     except:
         pass
 
