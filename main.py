@@ -26,8 +26,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 🔥 API KEYS
-GOOGLE_API_KEY = "AIzaSyCDNZNm7Hy3wUWTqL2CDfKgMze8Q_P5CBk"
 ORS_API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgi"
 
 class RouteRequest(BaseModel):
@@ -58,41 +56,43 @@ def clean_address(addr):
     addr = addr.replace("-", " ")
     addr = addr.replace("  ", " ")
 
-    # 🔥 adiciona contexto (ESSENCIAL)
+    # 🔥 contexto essencial
     if "itatiba" not in addr:
         addr += " itatiba"
 
-    if "sp" not in addr:
-        addr += " sp"
+    if "sao paulo" not in addr:
+        addr += " sao paulo"
 
     if "brasil" not in addr:
         addr += " brasil"
 
     return addr.strip()
 
-# 🔥 GEOCODING COM FALLBACK REAL
+# 🔥 GEOCODING FUNCIONAL (NOMINATIM CORRETO)
 def get_coordinates(address):
     try:
-        url = "https://api.openrouteservice.org/geocode/search"
-        headers = {"Authorization": ORS_API_KEY}
+        url = "https://nominatim.openstreetmap.org/search"
 
         params = {
-            "text": address,
-            "size": 1
+            "q": address,
+            "format": "json",
+            "limit": 1
+        }
+
+        headers = {
+            "User-Agent": "routeasy-app"
         }
 
         r = requests.get(url, params=params, headers=headers)
+        data = r.json()
 
-        if r.status_code == 200:
-            data = r.json()
+        print("🔎 Nominatim:", data)
 
-            if "features" in data and data["features"]:
-                coords = data["features"][0]["geometry"]["coordinates"]
-                print("✅ ORS geocode:", coords)
-                return coords
+        if data:
+            return [float(data[0]["lon"]), float(data[0]["lat"])]
 
     except Exception as e:
-        print("❌ ORS erro:", e)
+        print("❌ Erro geocode:", e)
 
     return None
 
@@ -155,7 +155,10 @@ def optimize(data: RouteRequest):
         else:
             invalid_addresses.append(addr)
 
-        time.sleep(0.2)
+        time.sleep(1)
+
+    print("📍 Válidos:", valid_coords)
+    print("⚠️ Inválidos:", invalid_addresses)
 
     if len(valid_coords) < 2:
         return {
