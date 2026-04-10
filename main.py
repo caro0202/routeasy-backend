@@ -27,7 +27,7 @@ app.add_middleware(
 )
 
 # 🔥 SUA API KEY GOOGLE
-GOOGLE_API_KEY = "SUA_API_KEY_GOOGLE"
+GOOGLE_API_KEY = "AIzaSyCDNZNm7Hy3wUWTqL2CDfKgMze8Q_P5CBk"
 
 ORS_API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgi"
 
@@ -67,7 +67,7 @@ def get_coordinates(address):
 
         params = {
             "address": address,
-            "key": AIzaSyA8JbV0I504bp9x9FfzA9f2t2ZavbyySn4
+            "key": AIzaSyCDNZNm7Hy3wUWTqL2CDfKgMze8Q_P5CBk
         }
 
         r = requests.get(url, params=params)
