@@ -155,7 +155,7 @@ def optimize(data: RouteRequest):
         else:
             invalid_addresses.append(addr)
 
-        time.sleep(1)
+        time.sleep(0.2)
 
     print("📍 Válidos:", valid_coords)
     print("⚠️ Inválidos:", invalid_addresses)
