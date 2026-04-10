@@ -5,16 +5,6 @@ import requests
 import time
 from ortools.constraint_solver import routing_enums_pb2, pywrapcp
 
-# 🔥 BANCO
-from sqlalchemy import create_engine, Column, Integer, String
-from sqlalchemy.orm import sessionmaker, declarative_base
-
-DATABASE_URL = "postgresql+psycopg2://routeasy_user:ctvMqrVrVdTAmoheJP2NJZ5KGxn6tv8J@dpg-d7c27l67r5hc739l5nng-a.oregon-postgres.render.com/routeasy"
-
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(bind=engine)
-Base = declarative_base()
-
 app = FastAPI()
 
 # 🔥 CORS
@@ -26,75 +16,58 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 🔥 ORS API (rota)
-ORS_API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgi"
+# 🔥 HISTÓRICO EM MEMÓRIA
+history_storage = []
+
+API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgi"
 
 class RouteRequest(BaseModel):
     addresses: list = []
-
-# -------------------------
-# BANCO
-# -------------------------
-
-class History(Base):
-    __tablename__ = "history"
-    id = Column(Integer, primary_key=True)
-    input = Column(String)
-
-Base.metadata.create_all(bind=engine)
+    coords: list = []
 
 # -------------------------
 # UTILIDADES
 # -------------------------
 
 def clean_address(addr):
-    addr = addr.lower()
-
-    addr = addr.replace("r ", "rua ")
-    addr = addr.replace("av ", "avenida ")
     addr = addr.replace(",", " ")
-    addr = addr.replace(".", " ")
-    addr = addr.replace("-", " ")
     addr = addr.replace("  ", " ")
 
-    # 🔥 ajuda o geocode
-    if "itatiba" not in addr:
-        addr += " itatiba"
-
-    if "sp" not in addr:
-        addr += " sp"
-
-    if "brasil" not in addr:
-        addr += " brasil"
+    # 🔥 contexto ajuda muito o Nominatim
+    if "Brasil" not in addr:
+        addr += " São Paulo Brasil"
 
     return addr.strip()
 
-# 🔥 GEOCODING FUNCIONAL (maps.co)
 def get_coordinates(address):
+    url = "https://nominatim.openstreetmap.org/search"
+    params = {"q": address, "format": "json", "limit": 1}
+    headers = {"User-Agent": "routeasy-app"}
+
     try:
-        url = "https://geocode.maps.co/search"
+        print("Buscando:", address)
 
-        params = {
-            "q": address
-        }
+        r = requests.get(url, params=params, headers=headers)
 
-        r = requests.get(url, params=params)
-        data = r.json()
+        if r.status_code == 200:
+            data = r.json()
 
-        print("🔎 maps.co:", data)
+            if data:
+                coord = [float(data[0]["lon"]), float(data[0]["lat"])]
+                print("Encontrado:", coord)
+                return coord
 
-        if data:
-            return [float(data[0]["lon"]), float(data[0]["lat"])]
+        print("Não encontrado:", address)
 
     except Exception as e:
-        print("❌ erro geocode:", e)
+        print("Erro geocoding:", e)
 
     return None
 
 def get_matrix(coords):
     url = "https://api.openrouteservice.org/v2/matrix/driving-car"
     headers = {
-        "Authorization": ORS_API_KEY,
+        "Authorization": API_KEY,
         "Content-Type": "application/json"
     }
 
@@ -109,13 +82,13 @@ def get_matrix(coords):
         data = r.json()
         return data["distances"], data["durations"]
 
-    print("❌ Erro matrix:", r.text)
+    print("Erro matrix:", r.text)
     return None, None
 
 def get_route(coords):
     url = "https://api.openrouteservice.org/v2/directions/driving-car"
     headers = {
-        "Authorization": ORS_API_KEY,
+        "Authorization": API_KEY,
         "Content-Type": "application/json"
     }
 
@@ -126,7 +99,7 @@ def get_route(coords):
     if r.status_code == 200:
         return r.json()
 
-    print("❌ Erro route:", r.text)
+    print("Erro route:", r.text)
     return None
 
 # -------------------------
@@ -136,26 +109,32 @@ def get_route(coords):
 @app.post("/optimize")
 def optimize(data: RouteRequest):
 
-    db = SessionLocal()
+    addresses = data.addresses or []
+    coords_input = data.coords or []
 
     valid_coords = []
     valid_labels = []
     invalid_addresses = []
 
-    for addr in data.addresses:
-        cleaned = clean_address(addr)
-        coord = get_coordinates(cleaned)
+    if coords_input and len(coords_input) >= 2:
+        valid_coords = coords_input
+        valid_labels = [f"Ponto {i+1}" for i in range(len(coords_input))]
+    else:
+        for addr in addresses:
+            cleaned = clean_address(addr)
+            coord = get_coordinates(cleaned)
 
-        if coord:
-            valid_coords.append(coord)
-            valid_labels.append(addr)
-        else:
-            invalid_addresses.append(addr)
+            if coord:
+                valid_coords.append(coord)
+                valid_labels.append(addr)
+            else:
+                invalid_addresses.append(addr)
 
-        time.sleep(0.2)
+            # 🔥 IMPORTANTE: evitar bloqueio do Nominatim
+            time.sleep(1)
 
-    print("📍 Válidos:", valid_coords)
-    print("⚠️ Inválidos:", invalid_addresses)
+    print("Coords válidos:", valid_coords)
+    print("Inválidos:", invalid_addresses)
 
     if len(valid_coords) < 2:
         return {
@@ -221,27 +200,32 @@ def optimize(data: RouteRequest):
             "address": optimized_labels[i],
             "lat": optimized_coords[i][1],
             "lng": optimized_coords[i][0],
+            "stopIndex": i,
+            "distanceToNext": None
         }
         for i in range(len(optimized_coords))
     ]
 
-    # 🔥 salvar histórico
-    db.add(History(input=str(data.addresses)))
-    db.commit()
-
-    return {
+    result = {
         "route": formatted_route,
         "invalidAddresses": invalid_addresses,
         "totalDistance": route["summary"]["distance"] / 1000,
         "estimatedDuration": route["summary"]["duration"] / 60
     }
 
+    print("Resultado final:", result)
+
+    return result
+
 # -------------------------
 # HISTÓRICO
 # -------------------------
 
+@app.post("/save-history")
+def save_history(data: dict):
+    history_storage.append(data)
+    return {"status": "ok"}
+
 @app.get("/history")
 def get_history():
-    db = SessionLocal()
-    items = db.query(History).all()
-    return [{"input": i.input} for i in items]
+    return history_storage
