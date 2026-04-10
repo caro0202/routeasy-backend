@@ -26,14 +26,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 🔥 SUA API KEY GOOGLE
+# 🔥 API KEYS
 GOOGLE_API_KEY = "AIzaSyCDNZNm7Hy3wUWTqL2CDfKgMze8Q_P5CBk"
-
 ORS_API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgi"
 
 class RouteRequest(BaseModel):
     addresses: list = []
-    coords: list = []
 
 # -------------------------
 # BANCO
@@ -58,33 +56,27 @@ def clean_address(addr):
     addr = addr.replace("  ", " ")
     return addr.strip()
 
-# 🔥 GOOGLE GEOCODING (DEFINITIVO)
+# 🔥 GOOGLE GEOCODING CORRETO
 def get_coordinates(address):
     try:
-        print("🔎 Google:", address)
-
         url = "https://maps.googleapis.com/maps/api/geocode/json"
 
         params = {
             "address": address,
-            "key": AIzaSyCDNZNm7Hy3wUWTqL2CDfKgMze8Q_P5CBk
+            "key": GOOGLE_API_KEY
         }
 
         r = requests.get(url, params=params)
+        data = r.json()
 
-        if r.status_code == 200:
-            data = r.json()
+        print("🔎 Google resposta:", data)
 
-            if data["results"]:
-                loc = data["results"][0]["geometry"]["location"]
-                coord = [loc["lng"], loc["lat"]]
-                print("✅ Google OK:", coord)
-                return coord
-
-        print("❌ Google não encontrou:", address)
+        if data["status"] == "OK" and data["results"]:
+            loc = data["results"][0]["geometry"]["location"]
+            return [loc["lng"], loc["lat"]]
 
     except Exception as e:
-        print("⚠️ Erro Google:", e)
+        print("❌ Erro Google:", e)
 
     return None
 
@@ -151,7 +143,7 @@ def optimize(data: RouteRequest):
 
         time.sleep(0.2)
 
-    print("📍 Válidos:", valid_coords)
+    print("📍 Coordenadas válidas:", valid_coords)
     print("⚠️ Inválidos:", invalid_addresses)
 
     if len(valid_coords) < 2:
@@ -222,6 +214,7 @@ def optimize(data: RouteRequest):
         for i in range(len(optimized_coords))
     ]
 
+    # 🔥 SALVAR HISTÓRICO
     db.add(History(input=str(data.addresses)))
     db.commit()
 
