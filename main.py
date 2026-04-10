@@ -58,51 +58,42 @@ def clean_address(addr):
     addr = addr.replace("-", " ")
     addr = addr.replace("  ", " ")
 
+    # 🔥 adiciona contexto (ESSENCIAL)
+    if "itatiba" not in addr:
+        addr += " itatiba"
+
+    if "sp" not in addr:
+        addr += " sp"
+
+    if "brasil" not in addr:
+        addr += " brasil"
+
     return addr.strip()
 
 # 🔥 GEOCODING COM FALLBACK REAL
 def get_coordinates(address):
-
-    # 1️⃣ GOOGLE
-    try:
-        url = "https://maps.googleapis.com/maps/api/geocode/json"
-
-        params = {
-            "address": address,
-            "key": GOOGLE_API_KEY
-        }
-
-        r = requests.get(url, params=params)
-        data = r.json()
-
-        print("🔎 Google:", data.get("status"))
-
-        if data["status"] == "OK" and data["results"]:
-            loc = data["results"][0]["geometry"]["location"]
-            return [loc["lng"], loc["lat"]]
-
-    except Exception as e:
-        print("⚠️ Erro Google:", e)
-
-    # 2️⃣ FALLBACK ORS
     try:
         url = "https://api.openrouteservice.org/geocode/search"
         headers = {"Authorization": ORS_API_KEY}
-        params = {"text": address, "size": 1}
+
+        params = {
+            "text": address,
+            "size": 1
+        }
 
         r = requests.get(url, params=params, headers=headers)
-        data = r.json()
 
-        print("🔎 ORS fallback")
+        if r.status_code == 200:
+            data = r.json()
 
-        if "features" in data and data["features"]:
-            coords = data["features"][0]["geometry"]["coordinates"]
-            return coords
+            if "features" in data and data["features"]:
+                coords = data["features"][0]["geometry"]["coordinates"]
+                print("✅ ORS geocode:", coords)
+                return coords
 
     except Exception as e:
-        print("⚠️ Erro ORS:", e)
+        print("❌ ORS erro:", e)
 
-    print("❌ Endereço inválido:", address)
     return None
 
 def get_matrix(coords):
