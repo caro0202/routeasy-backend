@@ -26,6 +26,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 🔥 ORS API (rota)
 ORS_API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgi"
 
 class RouteRequest(BaseModel):
@@ -56,43 +57,37 @@ def clean_address(addr):
     addr = addr.replace("-", " ")
     addr = addr.replace("  ", " ")
 
-    # 🔥 contexto essencial
+    # 🔥 ajuda o geocode
     if "itatiba" not in addr:
         addr += " itatiba"
 
-    if "sao paulo" not in addr:
-        addr += " sao paulo"
+    if "sp" not in addr:
+        addr += " sp"
 
     if "brasil" not in addr:
         addr += " brasil"
 
     return addr.strip()
 
-# 🔥 GEOCODING FUNCIONAL (NOMINATIM CORRETO)
+# 🔥 GEOCODING FUNCIONAL (maps.co)
 def get_coordinates(address):
     try:
-        url = "https://nominatim.openstreetmap.org/search"
+        url = "https://geocode.maps.co/search"
 
         params = {
-            "q": address,
-            "format": "json",
-            "limit": 1
+            "q": address
         }
 
-        headers = {
-            "User-Agent": "routeasy-app"
-        }
-
-        r = requests.get(url, params=params, headers=headers)
+        r = requests.get(url, params=params)
         data = r.json()
 
-        print("🔎 Nominatim:", data)
+        print("🔎 maps.co:", data)
 
         if data:
             return [float(data[0]["lon"]), float(data[0]["lat"])]
 
     except Exception as e:
-        print("❌ Erro geocode:", e)
+        print("❌ erro geocode:", e)
 
     return None
 
@@ -114,6 +109,7 @@ def get_matrix(coords):
         data = r.json()
         return data["distances"], data["durations"]
 
+    print("❌ Erro matrix:", r.text)
     return None, None
 
 def get_route(coords):
@@ -130,6 +126,7 @@ def get_route(coords):
     if r.status_code == 200:
         return r.json()
 
+    print("❌ Erro route:", r.text)
     return None
 
 # -------------------------
@@ -155,7 +152,7 @@ def optimize(data: RouteRequest):
         else:
             invalid_addresses.append(addr)
 
-        time.sleep(1.2)
+        time.sleep(0.2)
 
     print("📍 Válidos:", valid_coords)
     print("⚠️ Inválidos:", invalid_addresses)
@@ -228,6 +225,7 @@ def optimize(data: RouteRequest):
         for i in range(len(optimized_coords))
     ]
 
+    # 🔥 salvar histórico
     db.add(History(input=str(data.addresses)))
     db.commit()
 
