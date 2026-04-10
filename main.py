@@ -26,14 +26,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgi"
+# 🔥 SUA API KEY GOOGLE
+GOOGLE_API_KEY = "SUA_API_KEY_GOOGLE"
+
+ORS_API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgi"
 
 class RouteRequest(BaseModel):
     addresses: list = []
     coords: list = []
 
 # -------------------------
-# 🔥 MODELO DO BANCO
+# BANCO
 # -------------------------
 
 class History(Base):
@@ -44,77 +47,53 @@ class History(Base):
 Base.metadata.create_all(bind=engine)
 
 # -------------------------
-# 🔥 UTILIDADES
+# UTILIDADES
 # -------------------------
 
 def clean_address(addr):
     addr = addr.lower()
-
-    addr = addr.replace("r ", "rua ")
-    addr = addr.replace("av ", "avenida ")
     addr = addr.replace(",", " ")
     addr = addr.replace(".", " ")
     addr = addr.replace("-", " ")
     addr = addr.replace("  ", " ")
-
-    if "itatiba" not in addr:
-        addr += " itatiba"
-
-    if "sao paulo" not in addr:
-        addr += " sao paulo"
-
-    if "brasil" not in addr:
-        addr += " brasil"
-
     return addr.strip()
 
-# 🔥 GEOCODING COM FALLBACK
+# 🔥 GOOGLE GEOCODING (DEFINITIVO)
 def get_coordinates(address):
-    # 1️⃣ NOMINATIM
     try:
-        print("🔎 Nominatim:", address)
+        print("🔎 Google:", address)
 
-        url = "https://nominatim.openstreetmap.org/search"
-        params = {"q": address, "format": "json", "limit": 1}
-        headers = {"User-Agent": "route-optimizer"}
+        url = "https://maps.googleapis.com/maps/api/geocode/json"
 
-        r = requests.get(url, params=params, headers=headers)
+        params = {
+            "address": address,
+            "key": AIzaSyA8JbV0I504bp9x9FfzA9f2t2ZavbyySn4
+        }
 
-        if r.status_code == 200 and r.json():
-            data = r.json()[0]
-            coord = [float(data["lon"]), float(data["lat"])]
-            print("✅ Nominatim OK:", coord)
-            return coord
-
-    except Exception as e:
-        print("⚠️ Nominatim erro:", e)
-
-    # 2️⃣ FALLBACK OPENROUTESERVICE
-    try:
-        print("🔎 ORS:", address)
-
-        url = "https://api.openrouteservice.org/geocode/search"
-        headers = {"Authorization": API_KEY}
-        params = {"text": address, "size": 1}
-
-        r = requests.get(url, params=params, headers=headers)
+        r = requests.get(url, params=params)
 
         if r.status_code == 200:
             data = r.json()
-            if data["features"]:
-                coord = data["features"][0]["geometry"]["coordinates"]
-                print("✅ ORS OK:", coord)
+
+            if data["results"]:
+                loc = data["results"][0]["geometry"]["location"]
+                coord = [loc["lng"], loc["lat"]]
+                print("✅ Google OK:", coord)
                 return coord
 
-    except Exception as e:
-        print("⚠️ ORS erro:", e)
+        print("❌ Google não encontrou:", address)
 
-    print("❌ NÃO ENCONTRADO:", address)
+    except Exception as e:
+        print("⚠️ Erro Google:", e)
+
     return None
 
 def get_matrix(coords):
     url = "https://api.openrouteservice.org/v2/matrix/driving-car"
-    headers = {"Authorization": API_KEY, "Content-Type": "application/json"}
+    headers = {
+        "Authorization": ORS_API_KEY,
+        "Content-Type": "application/json"
+    }
 
     body = {
         "locations": coords,
@@ -132,7 +111,10 @@ def get_matrix(coords):
 
 def get_route(coords):
     url = "https://api.openrouteservice.org/v2/directions/driving-car"
-    headers = {"Authorization": API_KEY, "Content-Type": "application/json"}
+    headers = {
+        "Authorization": ORS_API_KEY,
+        "Content-Type": "application/json"
+    }
 
     body = {"coordinates": coords}
 
@@ -145,7 +127,7 @@ def get_route(coords):
     return None
 
 # -------------------------
-# 🔥 API PRINCIPAL
+# API PRINCIPAL
 # -------------------------
 
 @app.post("/optimize")
@@ -167,7 +149,7 @@ def optimize(data: RouteRequest):
         else:
             invalid_addresses.append(addr)
 
-        time.sleep(1)
+        time.sleep(0.2)
 
     print("📍 Válidos:", valid_coords)
     print("⚠️ Inválidos:", invalid_addresses)
@@ -243,19 +225,15 @@ def optimize(data: RouteRequest):
     db.add(History(input=str(data.addresses)))
     db.commit()
 
-    result = {
+    return {
         "route": formatted_route,
         "invalidAddresses": invalid_addresses,
         "totalDistance": route["summary"]["distance"] / 1000,
         "estimatedDuration": route["summary"]["duration"] / 60
     }
 
-    print("🚀 RESULTADO FINAL:", result)
-
-    return result
-
 # -------------------------
-# 🔥 HISTÓRICO
+# HISTÓRICO
 # -------------------------
 
 @app.get("/history")
