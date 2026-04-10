@@ -50,14 +50,20 @@ Base.metadata.create_all(bind=engine)
 
 def clean_address(addr):
     addr = addr.lower()
+
+    addr = addr.replace("r ", "rua ")
+    addr = addr.replace("av ", "avenida ")
     addr = addr.replace(",", " ")
     addr = addr.replace(".", " ")
     addr = addr.replace("-", " ")
     addr = addr.replace("  ", " ")
+
     return addr.strip()
 
-# 🔥 GOOGLE GEOCODING CORRETO
+# 🔥 GEOCODING COM FALLBACK REAL
 def get_coordinates(address):
+
+    # 1️⃣ GOOGLE
     try:
         url = "https://maps.googleapis.com/maps/api/geocode/json"
 
@@ -69,15 +75,34 @@ def get_coordinates(address):
         r = requests.get(url, params=params)
         data = r.json()
 
-        print("🔎 Google resposta:", data)
+        print("🔎 Google:", data.get("status"))
 
         if data["status"] == "OK" and data["results"]:
             loc = data["results"][0]["geometry"]["location"]
             return [loc["lng"], loc["lat"]]
 
     except Exception as e:
-        print("❌ Erro Google:", e)
+        print("⚠️ Erro Google:", e)
 
+    # 2️⃣ FALLBACK ORS
+    try:
+        url = "https://api.openrouteservice.org/geocode/search"
+        headers = {"Authorization": ORS_API_KEY}
+        params = {"text": address, "size": 1}
+
+        r = requests.get(url, params=params, headers=headers)
+        data = r.json()
+
+        print("🔎 ORS fallback")
+
+        if "features" in data and data["features"]:
+            coords = data["features"][0]["geometry"]["coordinates"]
+            return coords
+
+    except Exception as e:
+        print("⚠️ Erro ORS:", e)
+
+    print("❌ Endereço inválido:", address)
     return None
 
 def get_matrix(coords):
@@ -98,7 +123,6 @@ def get_matrix(coords):
         data = r.json()
         return data["distances"], data["durations"]
 
-    print("❌ Erro matrix:", r.text)
     return None, None
 
 def get_route(coords):
@@ -115,7 +139,6 @@ def get_route(coords):
     if r.status_code == 200:
         return r.json()
 
-    print("❌ Erro route:", r.text)
     return None
 
 # -------------------------
@@ -142,9 +165,6 @@ def optimize(data: RouteRequest):
             invalid_addresses.append(addr)
 
         time.sleep(0.2)
-
-    print("📍 Coordenadas válidas:", valid_coords)
-    print("⚠️ Inválidos:", invalid_addresses)
 
     if len(valid_coords) < 2:
         return {
@@ -214,7 +234,6 @@ def optimize(data: RouteRequest):
         for i in range(len(optimized_coords))
     ]
 
-    # 🔥 SALVAR HISTÓRICO
     db.add(History(input=str(data.addresses)))
     db.commit()
 
