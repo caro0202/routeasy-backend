@@ -2,82 +2,189 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 import requests
+import time
+from ortools.constraint_solver import routing_enums_pb2, pywrapcp
 
 app = FastAPI()
 
+# ✅ CORS CORRETO (frontend + local)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://routeasy-frontend.vercel.app",
+        "http://localhost:3000"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-ORS_API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgi"
+API_KEY = "SUA_CHAVE_OPENROUTESERVICE_AQUI"
 
 class RouteRequest(BaseModel):
     addresses: list = []
+    coords: list = []
 
-@app.post("/optimize")
-def optimize(data: RouteRequest):
+# -------------------------
+# UTIL
+# -------------------------
 
-    # 🔥 CONVERTE ENDEREÇOS DIRETO COM ORS
-    coords = []
+def clean_address(addr):
+    addr = addr.replace(",", " ")
+    addr = addr.replace("  ", " ")
 
-    for addr in data.addresses:
-        geo_url = "https://api.openrouteservice.org/geocode/search"
-        headers = {"Authorization": ORS_API_KEY}
-        params = {"text": addr, "size": 1}
+    if "Brasil" not in addr:
+        addr += " São Paulo Brasil"
 
-        r = requests.get(geo_url, params=params, headers=headers)
-        geo_data = r.json()
+    return addr.strip()
 
-        if geo_data.get("features"):
-            coords.append(geo_data["features"][0]["geometry"]["coordinates"])
+# 🔥 GEOCODING ESTÁVEL (OpenStreetMap)
+def get_coordinates(address):
+    url = "https://nominatim.openstreetmap.org/search"
+    params = {"q": address, "format": "json", "limit": 1}
+    headers = {"User-Agent": "routeasy-app"}
 
-    if len(coords) < 2:
-        return {
-            "route": [],
-            "invalidAddresses": data.addresses,
-            "totalDistance": 0,
-            "estimatedDuration": 0
-        }
+    try:
+        r = requests.get(url, params=params, headers=headers)
 
-    # 🔥 ROTA DIRETA
-    route_url = "https://api.openrouteservice.org/v2/directions/driving-car"
+        if r.status_code == 200 and r.json():
+            data = r.json()[0]
+            return [float(data["lon"]), float(data["lat"])]
+
+    except Exception as e:
+        print("Erro geocoding:", e)
+
+    return None
+
+# 🔥 MATRIZ
+def get_matrix(coords):
+    url = "https://api.openrouteservice.org/v2/matrix/driving-car"
+
     headers = {
-        "Authorization": ORS_API_KEY,
+        "Authorization": API_KEY,
         "Content-Type": "application/json"
     }
 
     body = {
-        "coordinates": coords
+        "locations": coords,
+        "metrics": ["distance", "duration"]
     }
 
-    r = requests.post(route_url, json=body, headers=headers)
+    r = requests.post(url, json=body, headers=headers)
 
-    if r.status_code != 200:
+    if r.status_code == 200:
+        data = r.json()
+        return data["distances"], data["durations"]
+
+    print("Erro matrix:", r.text)
+    return None, None
+
+# 🔥 ROTA
+def get_route(coords):
+    url = "https://api.openrouteservice.org/v2/directions/driving-car"
+
+    headers = {
+        "Authorization": API_KEY,
+        "Content-Type": "application/json"
+    }
+
+    body = {"coordinates": coords}
+
+    r = requests.post(url, json=body, headers=headers)
+
+    if r.status_code == 200:
+        return r.json()
+
+    print("Erro route:", r.text)
+    return None
+
+# -------------------------
+# API
+# -------------------------
+
+@app.get("/")
+def root():
+    return {"status": "API rodando 🚀"}
+
+@app.post("/optimize")
+def optimize(data: RouteRequest):
+
+    addresses = data.addresses or []
+    coords_input = data.coords or []
+
+    valid_coords = []
+    valid_labels = []
+    invalid_addresses = []
+
+    # 🔥 usa coords direto se vier do frontend
+    if coords_input and len(coords_input) >= 2:
+        valid_coords = coords_input
+        valid_labels = [f"Ponto {i+1}" for i in range(len(coords_input))]
+    else:
+        for addr in addresses:
+            cleaned = clean_address(addr)
+            coord = get_coordinates(cleaned)
+
+            if coord:
+                valid_coords.append(coord)
+                valid_labels.append(addr)
+            else:
+                invalid_addresses.append(addr)
+
+            time.sleep(1)
+
+    if len(valid_coords) < 2:
         return {
-            "route": [],
-            "invalidAddresses": data.addresses,
-            "totalDistance": 0,
-            "estimatedDuration": 0
+            "error": "Poucos endereços válidos",
+            "invalid": invalid_addresses
         }
 
-    data = r.json()
-    route = data["routes"][0]
+    dist_matrix, dur_matrix = get_matrix(valid_coords)
 
-    formatted_route = [
-        {
-            "lat": coord[1],
-            "lng": coord[0]
-        }
-        for coord in coords
-    ]
+    if not dist_matrix:
+        return {"error": "Erro ao gerar matriz"}
+
+    manager = pywrapcp.RoutingIndexManager(len(valid_coords), 1, 0)
+    routing = pywrapcp.RoutingModel(manager)
+
+    def callback(from_index, to_index):
+        return int(dist_matrix[
+            manager.IndexToNode(from_index)
+        ][
+            manager.IndexToNode(to_index)
+        ])
+
+    transit_index = routing.RegisterTransitCallback(callback)
+    routing.SetArcCostEvaluatorOfAllVehicles(transit_index)
+
+    search = pywrapcp.DefaultRoutingSearchParameters()
+    search.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
+
+    solution = routing.SolveWithParameters(search)
+
+    order = []
+    index = routing.Start(0)
+
+    while not routing.IsEnd(index):
+        node = manager.IndexToNode(index)
+        order.append(node)
+        index = solution.Value(routing.NextVar(index))
+
+    optimized_coords = [valid_coords[i] for i in order]
+    optimized_labels = [valid_labels[i] for i in order]
+
+    route_data = get_route(optimized_coords)
+
+    if not route_data:
+        return {"error": "Erro ao gerar rota"}
+
+    route = route_data["routes"][0]
 
     return {
-        "route": formatted_route,
-        "invalidAddresses": [],
-        "totalDistance": route["summary"]["distance"] / 1000,
-        "estimatedDuration": route["summary"]["duration"] / 60
+        "coords": optimized_coords,
+        "addresses": optimized_labels,
+        "geometry": route["geometry"],
+        "distance": route["summary"]["distance"],
+        "duration": route["summary"]["duration"],
+        "invalid": invalid_addresses
     }
