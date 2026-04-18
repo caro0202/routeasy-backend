@@ -7,7 +7,7 @@ from ortools.constraint_solver import routing_enums_pb2, pywrapcp
 
 app = FastAPI()
 
-# ✅ CORS CORRETO (frontend + local)
+# 🔥 CORS CORRETO
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -19,14 +19,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-API_KEY = "SUA_CHAVE_OPENROUTESERVICE_AQUI"
+API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgi"
+
+# 🔥 HISTÓRICO EM MEMÓRIA
+history_storage = []
 
 class RouteRequest(BaseModel):
     addresses: list = []
     coords: list = []
 
 # -------------------------
-# UTIL
+# UTILIDADES
 # -------------------------
 
 def clean_address(addr):
@@ -38,7 +41,6 @@ def clean_address(addr):
 
     return addr.strip()
 
-# 🔥 GEOCODING ESTÁVEL (OpenStreetMap)
 def get_coordinates(address):
     url = "https://nominatim.openstreetmap.org/search"
     params = {"q": address, "format": "json", "limit": 1}
@@ -56,7 +58,6 @@ def get_coordinates(address):
 
     return None
 
-# 🔥 MATRIZ
 def get_matrix(coords):
     url = "https://api.openrouteservice.org/v2/matrix/driving-car"
 
@@ -79,7 +80,6 @@ def get_matrix(coords):
     print("Erro matrix:", r.text)
     return None, None
 
-# 🔥 ROTA
 def get_route(coords):
     url = "https://api.openrouteservice.org/v2/directions/driving-car"
 
@@ -116,7 +116,6 @@ def optimize(data: RouteRequest):
     valid_labels = []
     invalid_addresses = []
 
-    # 🔥 usa coords direto se vier do frontend
     if coords_input and len(coords_input) >= 2:
         valid_coords = coords_input
         valid_labels = [f"Ponto {i+1}" for i in range(len(coords_input))]
@@ -180,7 +179,7 @@ def optimize(data: RouteRequest):
 
     route = route_data["routes"][0]
 
-    return {
+    result = {
         "coords": optimized_coords,
         "addresses": optimized_labels,
         "geometry": route["geometry"],
@@ -188,3 +187,21 @@ def optimize(data: RouteRequest):
         "duration": route["summary"]["duration"],
         "invalid": invalid_addresses
     }
+
+    # 🔥 SALVA NO HISTÓRICO
+    history_storage.append(result)
+
+    return result
+
+# -------------------------
+# HISTORY (FIX 404)
+# -------------------------
+
+@app.post("/save-history")
+def save_history(data: dict):
+    history_storage.append(data)
+    return {"status": "ok"}
+
+@app.get("/history")
+def get_history():
+    return history_storage
