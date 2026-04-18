@@ -7,64 +7,43 @@ from ortools.constraint_solver import routing_enums_pb2, pywrapcp
 
 app = FastAPI()
 
-# 🔥 CORS CORRETO
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://routeasy-frontend.vercel.app",
-        "http://localhost:3000"
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgi"
-
-# 🔥 HISTÓRICO EM MEMÓRIA
-history_storage = []
+API_KEY = "SUA_CHAVE_OPENROUTESERVICE"
 
 class RouteRequest(BaseModel):
     addresses: list = []
     coords: list = []
 
-# -------------------------
-# UTILIDADES
-# -------------------------
-
 def clean_address(addr):
-    addr = addr.replace(",", " ")
-    addr = addr.replace("  ", " ")
-
-    if "Brasil" not in addr:
-        addr += " São Paulo Brasil"
-
-    return addr.strip()
+    addr = addr.replace(",", " ").strip()
+    return addr
 
 def get_coordinates(address):
     url = "https://nominatim.openstreetmap.org/search"
     params = {"q": address, "format": "json", "limit": 1}
-    headers = {"User-Agent": "routeasy-app"}
+    headers = {"User-Agent": "route-app"}
 
     try:
         r = requests.get(url, params=params, headers=headers)
-
         if r.status_code == 200 and r.json():
             data = r.json()[0]
             return [float(data["lon"]), float(data["lat"])]
-
-    except Exception as e:
-        print("Erro geocoding:", e)
+    except:
+        pass
 
     return None
 
 def get_matrix(coords):
     url = "https://api.openrouteservice.org/v2/matrix/driving-car"
-
-    headers = {
-        "Authorization": API_KEY,
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": API_KEY, "Content-Type": "application/json"}
 
     body = {
         "locations": coords,
@@ -77,16 +56,11 @@ def get_matrix(coords):
         data = r.json()
         return data["distances"], data["durations"]
 
-    print("Erro matrix:", r.text)
     return None, None
 
 def get_route(coords):
     url = "https://api.openrouteservice.org/v2/directions/driving-car"
-
-    headers = {
-        "Authorization": API_KEY,
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": API_KEY, "Content-Type": "application/json"}
 
     body = {"coordinates": coords}
 
@@ -95,16 +69,11 @@ def get_route(coords):
     if r.status_code == 200:
         return r.json()
 
-    print("Erro route:", r.text)
     return None
-
-# -------------------------
-# API
-# -------------------------
 
 @app.get("/")
 def root():
-    return {"status": "API rodando 🚀"}
+    return {"status": "ok"}
 
 @app.post("/optimize")
 def optimize(data: RouteRequest):
@@ -121,8 +90,7 @@ def optimize(data: RouteRequest):
         valid_labels = [f"Ponto {i+1}" for i in range(len(coords_input))]
     else:
         for addr in addresses:
-            cleaned = clean_address(addr)
-            coord = get_coordinates(cleaned)
+            coord = get_coordinates(clean_address(addr))
 
             if coord:
                 valid_coords.append(coord)
@@ -133,15 +101,12 @@ def optimize(data: RouteRequest):
             time.sleep(1)
 
     if len(valid_coords) < 2:
-        return {
-            "error": "Poucos endereços válidos",
-            "invalid": invalid_addresses
-        }
+        return {"error": "Poucos endereços válidos", "invalid": invalid_addresses}
 
-    dist_matrix, dur_matrix = get_matrix(valid_coords)
+    dist_matrix, _ = get_matrix(valid_coords)
 
     if not dist_matrix:
-        return {"error": "Erro ao gerar matriz"}
+        return {"error": "Erro na matriz"}
 
     manager = pywrapcp.RoutingIndexManager(len(valid_coords), 1, 0)
     routing = pywrapcp.RoutingModel(manager)
@@ -165,8 +130,7 @@ def optimize(data: RouteRequest):
     index = routing.Start(0)
 
     while not routing.IsEnd(index):
-        node = manager.IndexToNode(index)
-        order.append(node)
+        order.append(manager.IndexToNode(index))
         index = solution.Value(routing.NextVar(index))
 
     optimized_coords = [valid_coords[i] for i in order]
@@ -175,11 +139,11 @@ def optimize(data: RouteRequest):
     route_data = get_route(optimized_coords)
 
     if not route_data:
-        return {"error": "Erro ao gerar rota"}
+        return {"error": "Erro na rota"}
 
     route = route_data["routes"][0]
 
-    result = {
+    return {
         "coords": optimized_coords,
         "addresses": optimized_labels,
         "geometry": route["geometry"],
@@ -187,21 +151,3 @@ def optimize(data: RouteRequest):
         "duration": route["summary"]["duration"],
         "invalid": invalid_addresses
     }
-
-    # 🔥 SALVA NO HISTÓRICO
-    history_storage.append(result)
-
-    return result
-
-# -------------------------
-# HISTORY (FIX 404)
-# -------------------------
-
-@app.post("/save-history")
-def save_history(data: dict):
-    history_storage.append(data)
-    return {"status": "ok"}
-
-@app.get("/history")
-def get_history():
-    return history_storage
